@@ -6,15 +6,21 @@ import typer
 from pydantic import AnyUrl
 
 async def run_sequence(*functions: Awaitable[Any]) -> None:
+    """Run functions in sequence"""
+
     for function in functions:
         await function
 
 
 async def run_parallel(*functions: Awaitable[Any]) -> None:
+    """Run functions in parallel"""
+
     await asyncio.gather(*functions)
 
 
 async def check_port(ip: str, port: int, loop: asyncio.AbstractEventLoop) -> Tuple[str, int, bool]:
+    """ Check if a port is open """
+
     conn = asyncio.open_connection(ip, port, loop=loop)
     try:
         _, writer = await asyncio.wait_for(conn, timeout=0.3)  # unpack reader and writer
@@ -29,13 +35,16 @@ async def check_port(ip: str, port: int, loop: asyncio.AbstractEventLoop) -> Tup
 
 
 async def check_port_sem(sem: asyncio.Semaphore, ip: str, port: int, loop: asyncio.AbstractEventLoop) -> None:
+    """Check if a port is open with semaphore"""
+
     async with sem:
         return await check_port(ip, port, loop)
 
 
 async def run(hosts: List[str], ports: str, loop: asyncio.AbstractEventLoop) -> None:
-    # Change this value for concurrency limitation
-    sem = asyncio.Semaphore(4000)
+    """ Function creates a semaphore and runs check_port_sem for each host and port """
+
+    sem = asyncio.Semaphore(4000)  # Change this value for concurrency limitation
     tasks = [
         asyncio.create_task(check_port_sem(sem, host, port, loop))
         for host in hosts
@@ -48,9 +57,8 @@ async def run(hosts: List[str], ports: str, loop: asyncio.AbstractEventLoop) -> 
 def interface(
     hosts: List[str] = typer.Argument(...), ports: str = typer.Argument(..., help="Ports to check, e.g. '1-65535'")
 ) -> None:
-    # hosts = ['google.com']
-    print("Hosts: ", hosts, "Ports: ", ports)
     """Simple CLI"""
+
     try:
         start_port, end_port = map(int, ports.split("-"))
     except ValueError:
