@@ -1,63 +1,72 @@
 import asyncio
-import click
+from asyncio import run as aiorun
+from typing import Any, Awaitable, List, Tuple
+
+import typer
+from pydantic import AnyUrl
+
+async def run_sequence(*functions: Awaitable[Any]) -> None:
+    for function in functions:
+        await function
 
 
-async def check_port(ip, port, loop):
+async def run_parallel(*functions: Awaitable[Any]) -> None:
+    await asyncio.gather(*functions)
+
+
+async def check_port(ip: str, port: int, loop: asyncio.AbstractEventLoop) -> Tuple[str, int, bool]:
     conn = asyncio.open_connection(ip, port, loop=loop)
     try:
-        reader, writer = await asyncio.wait_for(conn, timeout=0.3)
+        _, writer = await asyncio.wait_for(conn, timeout=0.3)  # unpack reader and writer
         print(ip, port, "ok")
         return (ip, port, True)
-    except:
-        print(ip, port, "nok")
+    except Exception as e:
+        print(ip, port, "not ok", e)
         return (ip, port, False)
     finally:
         if "writer" in locals():
             writer.close()
 
 
-async def check_port_sem(sem, ip, port, loop):
+async def check_port_sem(sem: asyncio.Semaphore, ip: str, port: int, loop: asyncio.AbstractEventLoop) -> None:
     async with sem:
         return await check_port(ip, port, loop)
 
 
-async def run(host, ports, loop):
+async def run(hosts: List[str], ports: str, loop: asyncio.AbstractEventLoop) -> None:
     # Change this value for concurrency limitation
-    sem = asyncio.Semaphore(400)
+    sem = asyncio.Semaphore(4000)
     tasks = [
-        asyncio.ensure_future(check_port_sem(sem, d, p, loop))
-        for d in host
-        for p in ports
+        asyncio.create_task(check_port_sem(sem, host, port, loop))
+        for host in hosts
+        for port in ports
     ]
-    responses = await asyncio.gather(*tasks)
+    responses = await run_parallel(*tasks)
     return responses
 
 
-@click.command()
-@click.option(
-    "--host", "-h", "host", required=True,
-    help="example --ports google.com"
-)
-@click.option(
-    "--ports", "-p", "ports",
-    help="example --host 1-100, default=1-65535",
-)
-def interface(host, ports="1-65535"):
+def interface(
+    hosts: List[str] = typer.Argument(...), ports: str = typer.Argument(..., help="Ports to check, e.g. '1-65535'")
+) -> None:
+    # hosts = ['google.com']
+    print("Hosts: ", hosts, "Ports: ", ports)
     """Simple CLI"""
-    start_port, end_port = ports.split("-")
-    return main(host, int(start_port), int(end_port))
+    try:
+        start_port, end_port = map(int, ports.split("-"))
+    except ValueError:
+        print("Invalid ports range, try --ports 1-65535")
+        raise SystemExit(1)  # exit with error
+    return main(hosts, int(start_port), int(end_port))
 
 
-def main(host, start_port, end_port):
-    host = [host]  # destinations
-    ports = [i for i in range(start_port, end_port)]  # ports
-    loop = asyncio.get_event_loop()
-    future = asyncio.ensure_future(run(host, ports, loop))
-    loop.run_until_complete(future)
-    print("#" * 50)
-    print("Results: ", future.result())
+def main(hosts: List[AnyUrl], start_port: int, end_port: int) -> None:
+    async def _main():
+        ports = [i for i in range(start_port, end_port)]
+        loop = asyncio.get_event_loop()
+        await run(hosts, ports, loop)
+        print("#" * 50)
+    aiorun(_main())
 
 
 if __name__ == "__main__":
-    interface()
-    main()
+    typer.run(interface)
